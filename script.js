@@ -153,34 +153,67 @@ canvas.addEventListener("touchstart", jump);
 canvas.addEventListener("mousedown", jump);
 
 // VOICE CONTROL (OPTIONAL)
-navigator.mediaDevices.getUserMedia({ audio: true })
-.then(stream => {
-  const audioContext = new AudioContext();
-  const mic = audioContext.createMediaStreamSource(stream);
-  const analyser = audioContext.createAnalyser();
+let audioContext;
+let analyser;
+let dataArray;
+let micStarted = false;
 
-  mic.connect(analyser);
-  analyser.fftSize = 256;
+async function startMic() {
+  if (micStarted) return;
 
-  const dataArray = new Uint8Array(analyser.frequencyBinCount);
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-  function detectSound() {
-    if (gameOver) return;
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
-    analyser.getByteFrequencyData(dataArray);
-    let volume = dataArray.reduce((a, b) => a + b) / dataArray.length;
-
-    if (volume > 60) {
-      jump();
+    // 🔥 penting untuk HP
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
     }
 
-    requestAnimationFrame(detectSound);
+    const source = audioContext.createMediaStreamSource(stream);
+    analyser = audioContext.createAnalyser();
+
+    analyser.fftSize = 256;
+    dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    source.connect(analyser);
+
+    micStarted = true;
+
+    detectSound();
+
+  } catch (err) {
+    alert("Mic tidak bisa digunakan di HP ini / belum diizinkan");
+    console.error(err);
+  }
+}
+
+function detectSound() {
+  if (!micStarted || gameOver) return;
+
+  // 🔥 fix tambahan untuk HP (resume loop)
+  if (audioContext.state === "suspended") {
+    audioContext.resume();
   }
 
-  detectSound();
-})
-.catch(() => {
-  console.log("Mic not used");
-});
+  analyser.getByteFrequencyData(dataArray);
+
+  let volume = dataArray.reduce((a, b) => a + b) / dataArray.length;
+
+  // DEBUG (aktifkan kalau mau cek)
+  // console.log(volume);
+
+  // 🔥 threshold lebih rendah untuk HP
+  if (volume > 45) {
+    jump();
+  }
+
+  requestAnimationFrame(detectSound);
+}
+
+// 🔥 WAJIB: trigger dari user interaction
+canvas.addEventListener("touchstart", startMic, { passive: true });
+canvas.addEventListener("click", startMic);
 
 update();
