@@ -1,8 +1,10 @@
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
-const restartBtn = document.getElementById("restartBtn");
 
-// RESPONSIVE CANVAS
+const restartBtn = document.getElementById("restartBtn");
+const startMicBtn = document.getElementById("startMicBtn");
+
+// ===== RESPONSIVE =====
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = 300;
@@ -10,6 +12,7 @@ function resizeCanvas() {
 resizeCanvas();
 window.addEventListener("resize", resizeCanvas);
 
+// ===== GAME STATE =====
 let player, gaps, speed, score, gameOver;
 
 function initGame() {
@@ -30,13 +33,10 @@ function initGame() {
   speed = 3;
   score = 0;
   gameOver = false;
-
-  restartBtn.style.display = "none";
 }
-
 initGame();
 
-// DRAW PLAYER
+// ===== DRAW =====
 function drawPlayer() {
   ctx.beginPath();
   ctx.arc(player.x, player.y - 15, 5, 0, Math.PI * 2);
@@ -55,7 +55,6 @@ function drawPlayer() {
   ctx.stroke();
 }
 
-// DRAW GROUND
 function drawGround() {
   ctx.fillStyle = "black";
   let prevX = 0;
@@ -68,14 +67,12 @@ function drawGround() {
   ctx.fillRect(prevX, 220, canvas.width - prevX, 80);
 }
 
-// DRAW SCORE
 function drawScore() {
   ctx.fillStyle = "black";
   ctx.font = "20px Arial";
   ctx.fillText("Score: " + score, 10, 30);
 }
 
-// GAME OVER
 function drawGameOver() {
   ctx.fillStyle = "rgba(200,0,0,0.4)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -83,11 +80,9 @@ function drawGameOver() {
   ctx.fillStyle = "red";
   ctx.font = "40px Arial";
   ctx.fillText("YOU ARE DEAD", canvas.width / 2 - 120, 150);
-
-  restartBtn.style.display = "block";
 }
 
-// GAME LOOP
+// ===== GAME LOOP =====
 function update() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -122,7 +117,7 @@ function update() {
       player.grounded = false;
     }
 
-    if (overGap && player.y > 220) {
+    if (overGap && player.y > 230) {
       gameOver = true;
     }
   }
@@ -136,12 +131,7 @@ function update() {
   requestAnimationFrame(update);
 }
 
-// RESTART BUTTON
-restartBtn.addEventListener("click", () => {
-  initGame();
-});
-
-// TAP / CLICK (HP + PC)
+// ===== CONTROL (TAP fallback) =====
 function jump() {
   if (player.grounded && !gameOver) {
     player.vy = player.jumpPower;
@@ -152,21 +142,25 @@ function jump() {
 canvas.addEventListener("touchstart", jump);
 canvas.addEventListener("mousedown", jump);
 
-// VOICE CONTROL (OPTIONAL)
-let audioContext;
-let analyser;
-let dataArray;
-let micStarted = false;
+// ===== VOICE (HP OPTIMIZED) =====
+let audioContext, analyser, dataArray;
+let micActive = false;
+let lastJumpTime = 0;
 
 async function startMic() {
-  if (micStarted) return;
+  if (micActive) return;
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      }
+    });
 
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
-    // 🔥 penting untuk HP
     if (audioContext.state === "suspended") {
       await audioContext.resume();
     }
@@ -174,46 +168,60 @@ async function startMic() {
     const source = audioContext.createMediaStreamSource(stream);
     analyser = audioContext.createAnalyser();
 
-    analyser.fftSize = 256;
-    dataArray = new Uint8Array(analyser.frequencyBinCount);
+    analyser.fftSize = 512;
+    dataArray = new Uint8Array(analyser.fftSize);
 
     source.connect(analyser);
 
-    micStarted = true;
+    micActive = true;
+    startMicBtn.innerText = "MIC ON";
 
     detectSound();
 
   } catch (err) {
-    alert("Mic tidak bisa digunakan di HP ini / belum diizinkan");
+    alert("Mic gagal diaktifkan");
     console.error(err);
   }
 }
 
-function detectSound() {
-  if (!micStarted || gameOver) return;
+// 🔥 RMS detection (lebih stabil untuk HP)
+function getVolume() {
+  analyser.getByteTimeDomainData(dataArray);
 
-  // 🔥 fix tambahan untuk HP (resume loop)
+  let sum = 0;
+  for (let i = 0; i < dataArray.length; i++) {
+    let val = (dataArray[i] - 128) / 128;
+    sum += val * val;
+  }
+  return Math.sqrt(sum / dataArray.length);
+}
+
+function detectSound() {
+  if (!micActive || gameOver) return;
+
   if (audioContext.state === "suspended") {
     audioContext.resume();
   }
 
-  analyser.getByteFrequencyData(dataArray);
+  let volume = getVolume();
 
-  let volume = dataArray.reduce((a, b) => a + b) / dataArray.length;
+  // 🔥 threshold HP (adjustable)
+  let threshold = 0.08;
 
-  // DEBUG (aktifkan kalau mau cek)
-  // console.log(volume);
+  // 🔥 cooldown biar ga spam
+  let now = Date.now();
 
-  // 🔥 threshold lebih rendah untuk HP
-  if (volume > 45) {
+  if (volume > threshold && now - lastJumpTime > 300) {
     jump();
+    lastJumpTime = now;
   }
 
   requestAnimationFrame(detectSound);
 }
 
-// 🔥 WAJIB: trigger dari user interaction
-canvas.addEventListener("touchstart", startMic, { passive: true });
-canvas.addEventListener("click", startMic);
+// BUTTON
+startMicBtn.addEventListener("click", startMic);
+restartBtn.addEventListener("click", initGame);
 
+// START LOOP
 update();
